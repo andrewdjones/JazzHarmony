@@ -1,26 +1,29 @@
-from sets import *
-import csv
-import pickle
-import numpy
-import os
-import operator
-from string import Template
-import collections
-from scipy.cluster.vq import *
-import scipy.stats
+@@ -0,0 +1,221 @@
 import midi
+import music21
 from imghdr import what
+import os
+import numpy
+from string import Template
+import csv
+import operator
+import scipy.stats
+import collections
 
-"""
-Primarily in-process modifications of existing, functional code
-Do them here so I don't fuck up the ones that work
-"""
 
-#path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIunquant/'
-path = '/lustre/scratch/client/fas/quinn/adj24/JazzMIDI/'
+path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIunquant/'
 listing = os.listdir(path)
 #testFile = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIQuantized/Alex_1_1.mid'
 #testFile = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIQuantized/Julian_5_6.mid'
+
+def getProbsFromFreqs(DictionaryOfTallies):
+    totalSum = 0.0
+    dictOfProbs = {}
+    for key, freq in DictionaryOfTallies.iteritems():
+        totalSum += float(freq)
+    for key, freq in DictionaryOfTallies.iteritems():
+        dictOfProbs[key] = float(freq)/totalSum
+    return dictOfProbs
 
 """
 OK, things to do:
@@ -30,11 +33,8 @@ OK, things to do:
 4. Translate those absolute ticks into elapsed milli/microseconds (DONE)
 5. Figure out the distribution of note lengths; choose a good one for windowing (SKIPPED)
 6. Make a list of time slices in which we can look for notes (DONE)
-7. Export time slices as a csv.  Mimic ycac? (DONE)
-8. Now, go back and figure out how to make the windows overlapping. (DONE)
+7. Export time slices as a csv.  Mimic ycac?
 """
-
-
 def midiTimeWindows(windowWidth,incUnit,solos=all):
     #windowWidth is obvious; incUnit how large the window slide step is
     #numTunes = 0
@@ -48,7 +48,7 @@ def midiTimeWindows(windowWidth,incUnit,solos=all):
         if solos != all:
             if testFile != solos:
                 continue
-        print path + testFile
+        #print path + testFile
         #if n > 50:
             #continue
             #break
@@ -97,35 +97,33 @@ def midiTimeWindows(windowWidth,incUnit,solos=all):
                     #break
                 absTicks = thing.tick * microspt/1000
                 if thing.__class__ == midi.events.NoteOnEvent and thing.get_velocity() != 0:
-                    #figure out how long it is by looking for off event
-                    for s in range(m,len(track)):
-                        if track[s].__class__ == midi.events.NoteOnEvent and track[s].get_velocity() == 0 and track[s].get_pitch() == thing.get_pitch():
-                            endTick = track[s].tick* microspt/1000
-                            diffTicks = endTick - absTicks
-                            break
-                        if track[s].__class__ == midi.events.NoteOffEvent and track[s].get_pitch() == thing.get_pitch():
-                            endTick = track[s].tick* microspt/1000
-                            diffTicks = endTick - absTicks
-                            break
-                        if s == len(track):
-                            print 'No note end!',testFile
                     for j in range(len(windows)):
-                        #weight considering four cases.  First, if the note off starts and ends inside the first window
+                        #deal with note on events case
+                        #put it in each window
                         if j*incUnit < absTicks < j*incUnit + windowWidth:
-                            if endTick < j*incUnit + windowWidth:
-                                windows[j][thing.get_pitch()] += int(round(diffTicks))
-                            #next, if it starts in one and stretches to some future window
-                            if endTick > j*incUnit + windowWidth:
-                                windows[j][thing.get_pitch()] += int(round(j*incUnit + windowWidth - absTicks))
+                            windows[j][thing.get_pitch()] += 1
                         if j*incUnit > absTicks:
-                            #if it started in some past window and ends in some future one
-                            if endTick > j*incUnit + windowWidth:
-                                windows[j][thing.get_pitch()] += windowWidth
-                            #and last: if it started in some past window and ends in this one
-                            if j*incUnit < endTick < j*incUnit + windowWidth:
-                                windows[j][thing.get_pitch()] += int(round(endTick - j*incUnit))
-                        #Once the note has ended, stop looking for places to stick it
-                        if j*incUnit > endTick:
+                            #first too-late window
+                            for k in range(j,len(windows)):
+                                #Add to all remaining; we'll turn it off later
+                                windows[k][thing.get_pitch()] += 1
+                            break
+                #deal with note off events cases
+                elif thing.__class__ == midi.events.NoteOnEvent and thing.get_velocity() == 0:
+                    for j in range(len(windows)):
+                        if j*incUnit > absTicks:
+                            #first window AFTER
+                            for k in range(j,len(windows)):
+                                #turn off in all windows after so it's not counted
+                                del windows[k][thing.get_pitch()]
+                            break
+                elif thing.__class__ == midi.events.NoteOffEvent:
+                    for j in range(len(windows)):
+                        if j*incUnit > absTicks:
+                            #first window AFTER
+                            for k in range(j,len(windows)):
+                                #turn off in all windows after so it's not counted
+                                del windows[k][thing.get_pitch()]
                             break
             for j in range(len(windows)):
                 if sum(windows[j].values()) == 0:#skip the empty windows
@@ -145,7 +143,7 @@ def midiTimeWindows(windowWidth,incUnit,solos=all):
     #print msandmidi
     '''
     #package up a csv
-    fieldnames = ['ms window end','weighted MIDI','ordered PCs','file']
+    fieldnames = ['ms window end','MIDI multiset','ordered PCs','file']
     fileName = Template('$siz $inc ms inc 1122.csv')
     csvName = fileName.substitute(siz = str(windowWidth), inc = str(incUnit))
     file = open(csvName, 'wb')
@@ -154,11 +152,8 @@ def midiTimeWindows(windowWidth,incUnit,solos=all):
     for row in msandmidi:
         lw.writerow(row)
     '''
-    #pickle that shit
-    fpPickle = Template('$win ms midcount overlap.pkl')
-    pickleName = fpPickle.substitute(win = windowWidth)
-    pickle.dump(msandmidi, open(pickleName, "wb"))
-    #return msandmidi
+    return msandmidi
+
 
 def entrop(solo=all):
     #go from 50ms to 60*1000 ms by doubling
@@ -183,53 +178,45 @@ def entrop(solo=all):
                 continue
             pcVector = []
             for j in range(12):
-                pcVector.append(0.1)
+                pcVector.append(0.01)
             for mid, counts in row[1].iteritems():
                 pcVector[mid%12] += counts
-            #print pcVector, scipy.exp2(scipy.stats.entropy(pcVector,base=2))
             entropies.append(scipy.exp2(scipy.stats.entropy(pcVector,base=2)))
             #print windowSize,pcVector, entropies[-1]
         EntropyatSize.append([windowSize,scipy.average(entropies)])
         #now write the body of the table
     if solo != all:
-        fileName = Template('$sol overlap window pc avg perp.csv')
+        fileName = Template('$sol overlap window pc avg ent.csv')
         csvName =fileName.substitute(sol = solo.split('.')[0])
     else:
-        csvName ='overlap window pc avg perp.csv'
+        csvName ='overlap window pc avg entropy.csv'
     file = open(csvName, 'wb')
     lw = csv.writer(file)
     for row in EntropyatSize:
         lw.writerow(row)
         
-def clusterPCVecs(windowWidth,clusters):
-    fpPickle = Template('$win ms midcount overlap.pkl')
-    pickleName = fpPickle.substitute(win = str(windowWidth))
-    msandmidi = pickle.load( open (pickleName, 'rb') )
-    pcVectors = []
+def slidingEntropy(solo,windowSize, incUnit):
+    """
+    GOAL: input solo and windowSize; outputs entropy of pc vector as window increments
+    """
+    msandmidi  = midiTimeWindows(windowSize, incUnit, solos = solo)
+    entropies = []
     for i, row in enumerate(msandmidi):
         if i == 0:
             continue
         pcVector = []
         for j in range(12):
-            pcVector.append(0.1)
+            pcVector.append(0.01)
         for mid, counts in row[1].iteritems():
             pcVector[mid%12] += counts
-        pcVectors.append(pcVector)
-    whitened = whiten(pcVectors)
-    clustered = kmeans(whitened,clusters)
-    print clustered
-    csvTemp = str(windowWidth) + Template('ms $clus-kclusters.csv')
-    csvName = csvTemp.substitute(clus = str(clusters))
+        entropies.append([row[0],scipy.exp2(scipy.stats.entropy(pcVector,base=2))])
+    fileName = Template('$sol overlap window pc ent.csv')
+    csvName =fileName.substitute(sol = solo.split('.')[0])
     file = open(csvName, 'wb')
     lw = csv.writer(file)
-    row1 = ['C','C#/Db','D','D#/Eb','E','F','F#/Gb','G','G#/Ab','A','Bb','B']
-    lw.writerow(row1)
-    for row in clustered[0]:
+    for row in entropies:
         lw.writerow(row)
-    lw.writerow(clustered[1])
-           
-
-midiTimeWindows(1600,50)
-#entrop()
-#clusterPCVecs(800,7)
-#slidingEntropy('Alex_6_6_blueingreen.mid', 1000, 25)
+              
+#entrop(solo='Alex_6_6_blueingreen.mid')
+slidingEntropy('Alex_6_6_blueingreen.mid', 1000, 25)
+#midiTimeWindows(200, 25)
