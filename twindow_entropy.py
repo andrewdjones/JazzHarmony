@@ -1,4 +1,3 @@
-from music21 import *
 from sets import *
 import csv
 import pickle
@@ -6,59 +5,19 @@ import numpy
 import os
 import operator
 from string import Template
-import numpy
 import collections
+from scipy.cluster.vq import *
+import scipy.stats
+import midi
+from imghdr import what
 
 """
 Primarily in-process modifications of existing, functional code
 Do them here so I don't fuck up the ones that work
 """
 
-def getProbsFromFreqs(DictionaryOfTallies):
-    totalSum = 0.0
-    dictOfProbs = {}
-    for key, freq in DictionaryOfTallies.iteritems():
-        totalSum += float(freq)
-    for key, freq in DictionaryOfTallies.iteritems():
-        dictOfProbs[key] = float(freq)/totalSum
-    return dictOfProbs
-        
-def pickleExplorer():
-    theSlices = pickle.load( open ('1122MajModeSliceDictwSDB.pkl', 'rb') )
-    sliceTally = {}
-    for i, slicey in enumerate(theSlices):
-        if slicey == ['start'] or slicey == ['end']:
-            continue
-        theKey = slicey['key']
-        theTonic = str(theKey).split(' ')[0]
-        theMode = str(theKey).split(' ')[1]
-        theKeyPC = pitch.Pitch(theTonic).pitchClass
-        keyTransPCs = [(n - theKeyPC)%12 for n in slicey['pcset']]
-        rightChord = chord.Chord(sorted(keyTransPCs))
-        rightLabel = rightChord.pitchNames
-        try:
-            sliceTally[str((rightLabel, slicey['bassSD']))] += 1
-        except KeyError:
-            sliceTally[str((rightLabel, slicey['bassSD']))] = 1
-    sorted_sliceTally = sorted(sliceTally.iteritems(), key=operator.itemgetter(1), reverse=True)
-    xmaj = csv.writer(open('MajModeSliceTally.csv', 'wb'))
-    for pair in sorted_sliceTally:
-        xmaj.writerow([pair[0],pair[1]])
-        
- 
- 
-import midi
-import music21
-from imghdr import what
-import os
-import numpy
-from string import Template
-import csv
-import operator
-import scipy.stats
-
-
-path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIunquant/'
+#path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIunquant/'
+path = '/lustre/scratch/client/fas/quinn/adj24/JazzMIDI/'
 listing = os.listdir(path)
 #testFile = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIQuantized/Alex_1_1.mid'
 #testFile = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIQuantized/Julian_5_6.mid'
@@ -75,12 +34,7 @@ OK, things to do:
 8. Now, go back and figure out how to make the windows overlapping. (DONE)
 """
 
-'''
-TO CHANGE
-For each window, whenever a pitch appears, weight it by its duration in the count
-So look for the noteOff after a given noteOn, and subtract their absTicks
-Counts need integers, so try #pitches x int(round(millisecs)), maybe?
-'''
+
 def midiTimeWindows(windowWidth,incUnit,solos=all):
     #windowWidth is obvious; incUnit how large the window slide step is
     #numTunes = 0
@@ -200,8 +154,11 @@ def midiTimeWindows(windowWidth,incUnit,solos=all):
     for row in msandmidi:
         lw.writerow(row)
     '''
-    return msandmidi
-
+    #pickle that shit
+    fpPickle = Template('$win ms midcount overlap.pkl')
+    pickleName = fpPickle.substitute(win = windowWidth)
+    pickle.dump(msandmidi, open(pickleName, "wb"))
+    #return msandmidi
 
 def entrop(solo=all):
     #go from 50ms to 60*1000 ms by doubling
@@ -235,37 +192,44 @@ def entrop(solo=all):
         EntropyatSize.append([windowSize,scipy.average(entropies)])
         #now write the body of the table
     if solo != all:
-        fileName = Template('$sol overlap window pc avg ent.csv')
+        fileName = Template('$sol overlap window pc avg perp.csv')
         csvName =fileName.substitute(sol = solo.split('.')[0])
     else:
-        csvName ='overlap window pc avg entropy.csv'
+        csvName ='overlap window pc avg perp.csv'
     file = open(csvName, 'wb')
     lw = csv.writer(file)
     for row in EntropyatSize:
         lw.writerow(row)
         
-def slidingEntropy(solo,windowSize, incUnit):
-    """
-    GOAL: input solo and windowSize; outputs entropy of pc vector as window increments
-    """
-    msandmidi  = midiTimeWindows(windowSize, incUnit, solos = solo)
-    entropies = []
+def clusterPCVecs(windowWidth,clusters):
+    fpPickle = Template('$win ms midcount overlap.pkl')
+    pickleName = fpPickle.substitute(win = str(windowWidth))
+    msandmidi = pickle.load( open (pickleName, 'rb') )
+    pcVectors = []
     for i, row in enumerate(msandmidi):
         if i == 0:
             continue
         pcVector = []
         for j in range(12):
-            pcVector.append(0.01)
+            pcVector.append(0.1)
         for mid, counts in row[1].iteritems():
             pcVector[mid%12] += counts
-        entropies.append([row[0],scipy.exp2(scipy.stats.entropy(pcVector,base=2))])
-    fileName = Template('$sol overlap window pc ent.csv')
-    csvName =fileName.substitute(sol = solo.split('.')[0])
+        pcVectors.append(pcVector)
+    whitened = whiten(pcVectors)
+    clustered = kmeans(whitened,clusters)
+    print clustered
+    csvTemp = str(windowWidth) + Template('ms $clus-kclusters.csv')
+    csvName = csvTemp.substitute(clus = str(clusters))
     file = open(csvName, 'wb')
     lw = csv.writer(file)
-    for row in entropies:
+    row1 = ['C','C#/Db','D','D#/Eb','E','F','F#/Gb','G','G#/Ab','A','Bb','B']
+    lw.writerow(row1)
+    for row in clustered[0]:
         lw.writerow(row)
+    lw.writerow(clustered[1])
            
-#midiTimeWindows(2000, 25, solos='Alex_6_6_blueingreen.mid')
-entrop()
+
+midiTimeWindows(1600,50)
+#entrop()
+#clusterPCVecs(800,7)
 #slidingEntropy('Alex_6_6_blueingreen.mid', 1000, 25)
