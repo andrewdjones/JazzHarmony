@@ -11,6 +11,8 @@ import scipy.stats
 import midi
 from imghdr import what
 
+#TEST: I just added this line in eclipse... will it show up on github?
+
 """
 Primarily in-process modifications of existing, functional code
 Do them here so I don't fuck up the ones that work
