@@ -11,15 +11,10 @@ import scipy.stats
 import midi
 from imghdr import what
 
-#print 'TEST: I just added this line in eclipse... will it show up on github?'
+#Data cleaning and local keyfinding/transposition for the YJaMP tracks
 
-"""
-Primarily in-process modifications of existing, functional code
-Do them here so I don't fuck up the ones that work
-"""
-
-#path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIunquant/'
-path = '/lustre/scratch/client/fas/quinn/adj24/JazzMIDI/'
+#path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIunquant/' #local
+path = '/lustre/scratch/client/fas/quinn/adj24/JazzMIDI/' #cluster
 listing = os.listdir(path)
 #testFile = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIQuantized/Alex_1_1.mid'
 #testFile = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIQuantized/Julian_5_6.mid'
@@ -28,25 +23,22 @@ listing = os.listdir(path)
 OK, things to do:
 1. Strip out tracks which contain no notes (DONE)
 2. From the remaining tracks, determine the number of milli(micro?)secs per tick (DONE)
-3. Get a list of the note event in absolute ticks (DONE)
+3. Get a list of the note events in absolute ticks (DONE)
 4. Translate those absolute ticks into elapsed milli/microseconds (DONE)
 5. Figure out the distribution of note lengths; choose a good one for windowing (SKIPPED)
 6. Make a list of time slices in which we can look for notes (DONE)
 7. Export time slices as a csv.  Mimic ycac? (DONE)
 8. Now, go back and figure out how to make the windows overlapping. (DONE)
 9. Weight the pc vectors from the time slices by duration (DONE)
-10. Transpose all the things to C (DONE)
+10. Transpose all the things to local C (DONE)
 """
 
 
 def midiTimeWindows(windowWidth,incUnit,solos=all,transpose=True):
-    #windowWidth is obvious; incUnit how large the window slide step is
-    #numTunes = 0
-    #numShortTracks = 0
-    #numTracks = 0
-    #if solos != all:
-        #listing = [solos]
-    #we'll make a list: [millisecs at end of window, music21 chord, set of midi numbers,  pcs in order, file name]
+    #Cleans raw midi data, producing binned windows of duration windowWidth sliding by step incUnit
+    #If transpose = True, yields pitch class sets in each durational window, else MIDI note names
+    
+    #data we'll output: [millisecs at end of window, music21 chord, set of midi numbers,  pcs in order, file name]
     msandmidi = []
     #Load the pickled slices that have not been bass-normalized into types
     if transpose==True:
@@ -57,15 +49,12 @@ def midiTimeWindows(windowWidth,incUnit,solos=all,transpose=True):
             if testFile != solos:
                 continue
         print path + testFile
+        #If transpose, 
         if transpose==True:
             for slice in allSlices:
                 if slice[0] == testFile:
                     theTonic = int(slice[1]) 
                     #print theTonic   
-        #if n > 50:
-            #continue
-            #break
-        #numTunes += 1
         #for use with import midi
         pattern = midi.read_midifile(path + testFile)
         #this line makes each tick count cumulative
@@ -106,8 +95,6 @@ def midiTimeWindows(windowWidth,incUnit,solos=all,transpose=True):
                 startTime += incUnit
             for m, thing in enumerate(track):
                 #Now put each event into all the right windows
-                #if m > 50:
-                    #break
                 absTicks = thing.tick * microspt/1000
                 if thing.__class__ == midi.events.NoteOnEvent and thing.get_velocity() != 0:
                     #figure out how long it is by looking for off event
@@ -167,7 +154,7 @@ def midiTimeWindows(windowWidth,incUnit,solos=all,transpose=True):
     for row in msandmidi:
         lw.writerow(row)
     '''
-    #pickle that shit
+    #pickle
     if transpose==True:
         fpPickle = Template('$win ms pcCount trans.pkl')
     elif transpose != True:
